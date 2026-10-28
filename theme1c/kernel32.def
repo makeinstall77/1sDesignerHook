@@ -10,6 +10,7 @@ EXPORTS
     ExitProcess
     GetCommandLineW
     GetCurrentProcessId
+    GetEnvironmentVariableW
     GetExitCodeProcess
     GetLastError
     GetTickCount
@@ -23,6 +24,7 @@ EXPORTS
     Module32NextW
     OpenFileMappingW
     QueueUserAPC
+    ReadFile
     ResumeThread
     SetCurrentDirectoryW
     Sleep

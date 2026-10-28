@@ -1,6 +1,6 @@
 #pragma once
 
-/* Freestanding reader for Local\Theme1C_State (cairo1c.dll, no CRT). */
+/* Freestanding reader for %AppData%\Theme1C\state.bin (and exe-dir mirror). */
 
 #include "minwin.h"
 #include "theme_state.h"
@@ -10,69 +10,71 @@
 extern "C" {
 #endif
 
-#if defined(_MSC_VER)
-#pragma intrinsic(_ReadWriteBarrier)
-static inline void Theme1C_Client_Barrier(void) { _ReadWriteBarrier(); }
-#else
-static inline void Theme1C_Client_Barrier(void) {}
-#endif
-
-/* Seqlock-read one snapshot. Returns 1 if magic/version/generation stable. */
-static inline int Theme1C_Client_TryCopy(
-    const volatile Theme1C_State* src,
-    Theme1C_State* dst) {
-  unsigned int g1;
-  unsigned int g2;
-  if (!src || !dst) return 0;
-
-  g1 = src->generation;
-  Theme1C_Client_Barrier();
-  if (g1 & 1u) return 0;
-
-  memcpy((void*)dst, (const void*)(Theme1C_State*)src, sizeof(Theme1C_State));
-  Theme1C_Client_Barrier();
-  g2 = src->generation;
-
-  if (g1 != g2 || (g2 & 1u)) return 0;
-  if (dst->magic != THEME1C_STATE_MAGIC) return 0;
-  if (dst->version != THEME1C_STATE_VERSION) return 0;
-  return 1;
+static inline int Theme1C_Client_CatW(wchar_t* dst, int cap, const wchar_t* src) {
+  int n = 0;
+  int i = 0;
+  if (!dst || cap <= 0 || !src) return 0;
+  while (dst[n]) n++;
+  while (src[i] && n + 1 < cap) dst[n++] = src[i++];
+  dst[n] = 0;
+  return src[i] == 0;
 }
 
-/* Open mapping read-only and map view. Leaves *outMap/*outView unchanged on failure. */
-static inline int Theme1C_Client_Open(
-    HANDLE* outMap,
-    const volatile Theme1C_State** outView) {
-  HANDLE map;
-  LPVOID view;
-  if (!outMap || !outView) return 0;
-  if (*outView) return 1;
+/* Build %APPDATA%\Theme1C\state.bin */
+static inline int Theme1C_Client_AppDataStatePath(wchar_t* out, int cap) {
+  DWORD n;
+  if (!out || cap < 32) return 0;
+  n = GetEnvironmentVariableW(L"APPDATA", out, (DWORD)cap);
+  if (n == 0 || n >= (DWORD)cap) return 0;
+  if (!Theme1C_Client_CatW(out, cap, L"\\Theme1C\\")) return 0;
+  return Theme1C_Client_CatW(out, cap, THEME1C_STATE_FILE_NAME);
+}
 
-  map = OpenFileMappingW(FILE_MAP_READ, FALSE, THEME1C_STATE_MAPPING_NAME);
-  if (!map) return 0;
+/* Build <dll-dir>\state.bin */
+static inline int Theme1C_Client_DllDirStatePath(HMODULE self, wchar_t* out, int cap) {
+  DWORD n;
+  int slash = -1;
+  DWORD i;
+  if (!out || cap < 16) return 0;
+  n = GetModuleFileNameW(self, out, (DWORD)cap);
+  if (n == 0 || n >= (DWORD)cap) return 0;
+  for (i = 0; i < n; i++) {
+    if (out[i] == L'\\' || out[i] == L'/') slash = (int)i;
+  }
+  if (slash < 0) return 0;
+  out[slash] = 0;
+  if (!Theme1C_Client_CatW(out, cap, L"\\")) return 0;
+  return Theme1C_Client_CatW(out, cap, THEME1C_STATE_FILE_NAME);
+}
 
-  view = MapViewOfFile(map, FILE_MAP_READ, 0, 0, sizeof(Theme1C_State));
-  if (!view) {
-    CloseHandle(map);
+static inline int Theme1C_Client_ReadPath(const wchar_t* path, Theme1C_State* dst) {
+  HANDLE file;
+  DWORD read = 0;
+  Theme1C_State tmp;
+  if (!path || !dst) return 0;
+  file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, OPEN_EXISTING,
+                     FILE_ATTRIBUTE_NORMAL, 0);
+  if (file == INVALID_HANDLE_VALUE) return 0;
+  if (!ReadFile(file, &tmp, (DWORD)sizeof(tmp), &read, 0) || read != sizeof(tmp)) {
+    CloseHandle(file);
     return 0;
   }
-
-  *outMap = map;
-  *outView = (const volatile Theme1C_State*)view;
+  CloseHandle(file);
+  if (tmp.magic != THEME1C_STATE_MAGIC) return 0;
+  if (tmp.version != THEME1C_STATE_VERSION) return 0;
+  if (tmp.generation & 1u) return 0; /* mid-write */
+  *dst = tmp;
   return 1;
 }
 
-static inline void Theme1C_Client_Close(
-    HANDLE* map,
-    const volatile Theme1C_State** view) {
-  if (view && *view) {
-    UnmapViewOfFile((LPCVOID)*view);
-    *view = 0;
-  }
-  if (map && *map) {
-    CloseHandle(*map);
-    *map = 0;
-  }
+/* Prefer AppData, then DLL directory mirror. */
+static inline int Theme1C_Client_ReadState(HMODULE self, Theme1C_State* dst) {
+  wchar_t path[MAX_PATH];
+  if (!dst) return 0;
+  if (Theme1C_Client_AppDataStatePath(path, MAX_PATH) && Theme1C_Client_ReadPath(path, dst)) return 1;
+  if (self && Theme1C_Client_DllDirStatePath(self, path, MAX_PATH) && Theme1C_Client_ReadPath(path, dst))
+    return 1;
+  return 0;
 }
 
 #ifdef __cplusplus

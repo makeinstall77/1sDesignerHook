@@ -24,8 +24,6 @@ static int g_seenCount = 0;
 
 static Theme1C_State g_theme;
 static int g_themeReady = 0;
-static HANDLE g_themeMap = 0;
-static const volatile Theme1C_State* g_themeView = 0;
 static DWORD g_themeTick = 0;
 
 static int Channel(double v) {
@@ -60,29 +58,18 @@ static void SetRgbC(double* r, double* g, double* b, Theme1C_Rgb c) {
 static void RefreshTheme(void) {
     DWORD now = GetTickCount();
     Theme1C_State tmp;
-    int i;
-
     if (g_themeReady && (now - g_themeTick) < 500u) return;
     g_themeTick = now;
 
-    if (!g_themeView) Theme1C_Client_Open(&g_themeMap, &g_themeView);
-
-    if (!g_themeView) {
-        Theme1C_State_FillDarkPlus(&g_theme);
+    if (Theme1C_Client_ReadState(g_self, &tmp)) {
+        g_theme = tmp;
         g_themeReady = 1;
         return;
     }
 
-    for (i = 0; i < 8; i++) {
-        if (Theme1C_Client_TryCopy(g_themeView, &tmp)) {
-            g_theme = tmp;
-            g_themeReady = 1;
-            return;
-        }
-    }
-
     if (!g_themeReady) {
         Theme1C_State_FillDarkPlus(&g_theme);
+        g_theme.enabled = 1;
         g_themeReady = 1;
     }
 }
@@ -637,49 +624,55 @@ static void PatchCoreColor(HMODULE mod, const char* name, DWORD color) {
     VirtualProtect(slot, 4, old, &ignored);
 }
 
-static void PatchRva(HMODULE mod, DWORD rva, DWORD color) {
-    BYTE* slot = (BYTE*)mod + rva;
-    DWORD old = 0;
-    if (!VirtualProtect(slot, 4, PAGE_READWRITE, &old)) return;
-    *(DWORD*)slot = color;
-    DWORD ignored = 0;
-    VirtualProtect(slot, 4, old, &ignored);
+static DWORD ModuleSizeOfImage(HMODULE mod) {
+    BYTE* base;
+    LONG lfanew;
+    BYTE* opt;
+    if (!mod) return 0;
+    base = (BYTE*)mod;
+    lfanew = *(LONG*)(base + 0x3C);
+    if (lfanew <= 0 || lfanew > 0x1000) return 0;
+    opt = base + lfanew + 24;
+    if (*(WORD*)opt != 0x20B) return 0;
+    return *(DWORD*)(opt + 56);
 }
 
-static void PatchConfiguratorPalette(void) {
-    const Theme1C_State* s;
-    HMODULE core;
-    DWORD ink, menu, side;
-    DWORD textRvas[] = {
-        0x3C2A3C, 0x3C2A40, 0x3C2A64, 0x3C2A70, 0x3C2A6C,
-        0x3C2A0C, 0x3C2A10, 0x3C29F8, 0x3C29F4, 0x3C2968
-    };
+static int PatchRva(HMODULE mod, DWORD rva, DWORD color, DWORD sizeOfImage) {
+    BYTE* slot;
+    DWORD old = 0;
+    DWORD ignored = 0;
+    if (!mod || sizeOfImage < 0x1000) return 0;
+    if (rva >= sizeOfImage || rva + 4 > sizeOfImage) return 0;
+    slot = (BYTE*)mod + rva;
+    if (!VirtualProtect(slot, 4, PAGE_READWRITE, &old)) return 0;
+    *(DWORD*)slot = color;
+    VirtualProtect(slot, 4, old, &ignored);
+    return 1;
+}
 
-    if (!ThemeEnabled()) {
-        LogLine("core palette skipped (disabled)\n");
+/* Fixed RVAs from an older core83 build. Writing them into 8.3.27+ corrupts
+ * heap/code and 1cv8 dies in ntdll (0xC0000005). Keep disabled until versioned. */
+static void PatchConfiguratorPalette(void) {
+    HMODULE core = GetModuleHandleW(L"core83.dll");
+    DWORD size = ModuleSizeOfImage(core);
+    if (!core) {
+        LogLine("core palette skipped (no core83)\n");
         return;
     }
-
-    core = GetModuleHandleW(L"core83.dll");
-    if (!core) return;
-    s = Theme();
-    ink = PackRgb(s->text);
-    menu = PackRgb(s->menu);
-    side = PackRgb(s->sidebar);
-    for (int i = 0; i < 10; i++) PatchRva(core, textRvas[i], ink);
-    PatchRva(core, 0x3C2AB0, menu);
-    PatchRva(core, 0x3C2A38, menu);
-    PatchRva(core, 0x3C2A60, side);
-    PatchRva(core, 0x3C2A34, side);
-    PatchRva(core, 0x3C2AB8, side);
-    LogLine("core palette patched\n");
+    /* size kept for a future versioned RVA table */
+    (void)size;
+    LogLine("core palette skipped (RVA table not for this platform build)\n");
 }
 
+static volatile int g_workerStarted = 0;
+
 static DWORD WINAPI Worker(LPVOID) {
-    Sleep(50);
+    /* Let LoadLibrary / AV finish before touching foreign modules. */
+    Sleep(1500);
+    LogLine("worker start\n");
     RefreshTheme();
-    if (g_themeView) LogLine("theme state mapping open\n");
-    else LogLine("theme state mapping missing, Dark+ defaults\n");
+    if (Theme1C_Client_ReadState(g_self, &g_theme)) LogLine("theme state.bin loaded\n");
+    else LogLine("theme state.bin missing, Dark+ defaults\n");
 
     HMODULE gdi = GetModuleHandleW(L"gdi32.dll");
     if (gdi) g_solid = (SolidBrushFn)GetProcAddress(gdi, "CreateSolidBrush");
@@ -697,21 +690,26 @@ static DWORD WINAPI Worker(LPVOID) {
     }
     if (!g_patched) LogLine("grphcs cairo imports not found\n");
     PatchConfiguratorPalette();
-    int gdiHits = 0;
-    for (int i = 0; i < 80; i++) {
-        RefreshTheme();
-        gdiHits += PatchLoadedGdi();
-        Sleep(250);
-    }
-    if (gdiHits > 0) LogLine("patched gdi text and system colors\n");
+    LogLine("worker done\n");
     return 0;
+}
+
+/* Called by injector via CreateRemoteThread AFTER LoadLibrary returns.
+ * Do not start worker from DllMain (loader lock / AV). */
+extern "C" __declspec(dllexport) DWORD WINAPI Theme1C_Start(LPVOID) {
+    HANDLE thread;
+    if (g_workerStarted) return 0;
+    g_workerStarted = 1;
+    LogLine("Theme1C_Start\n");
+    thread = CreateThread(0, 0, Worker, 0, 0, 0);
+    if (thread) CloseHandle(thread);
+    return 1;
 }
 
 extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
     if (reason == 1) {
         g_self = (HMODULE)instance;
         DisableThreadLibraryCalls((HMODULE)instance);
-        CreateThread(0, 0, Worker, 0, 0, 0);
     }
     return TRUE;
 }

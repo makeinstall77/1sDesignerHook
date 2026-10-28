@@ -3,7 +3,9 @@
 /* Frozen Theme1C shared-memory layout.
  * Usable from freestanding DLL — plain C, no CRT types. */
 
+/* Legacy named section — unused (crashed under late inject). IPC is state.bin. */
 #define THEME1C_STATE_MAPPING_NAME L"Local\\Theme1C_State"
+#define THEME1C_STATE_FILE_NAME L"state.bin"
 #define THEME1C_STATE_MAGIC 0x31433454u
 #define THEME1C_STATE_VERSION 1u
 

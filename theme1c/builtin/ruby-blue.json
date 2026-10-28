@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "ruby-blue",
+  "displayName": "RubyBlue",
+  "source": "builtin",
+  "sourceFormat": "theme1c",
+  "syntax": [
+    {"role":"keyword","matchRgb":[210,76,21],"outRgb":[204,255,0]},
+    {"role":"string","matchRgb":[212,47,51],"outRgb":[0,255,255]},
+    {"role":"comment","matchRgb":[137,154,51],"outRgb":[255,0,255]},
+    {"role":"identifier","matchRgb":[37,139,211],"outRgb":[255,255,255]},
+    {"role":"directive","matchRgb":[213,53,132],"outRgb":[0,200,255]}
+  ],
+  "chrome": {
+    "editorBg": [0,0,0],
+    "sidebar": [37,37,37],
+    "menu": [45,45,45],
+    "text": [255,255,255],
+    "captionGray": [37,37,37]
+  }
+}

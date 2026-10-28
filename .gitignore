@@ -14,6 +14,12 @@ theme1c/cairo1c5.dll
 theme1c/cairo1c6.dll
 theme1c/cairo1c7.dll
 theme1c/cairo1c.log
+theme1c/state.bin
+theme1c/state.bin.tmp
+theme1c/cairo1c.lib
+theme1c/cairo1c.exp
+theme1c/kernel32_fs.lib
+theme1c/kernel32_fs.exp
 
 # Editor / OS
 .vs/

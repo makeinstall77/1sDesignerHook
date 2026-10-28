@@ -120,6 +120,70 @@ bool ModuleLoadedInProcess(DWORD pid, const wchar_t* name) {
   return found;
 }
 
+static bool ModuleBaseInProcess(DWORD pid, const wchar_t* name, ULONG_PTR* outBase) {
+  if (!outBase) return false;
+  *outBase = 0;
+  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
+  if (snap == INVALID_HANDLE_VALUE) return false;
+  MODULEENTRY32W me;
+  memset(&me, 0, sizeof(me));
+  me.dwSize = sizeof(me);
+  bool found = false;
+  if (Module32FirstW(snap, &me)) {
+    do {
+      if (ContainsI(me.szModule, name) || EqualsI(me.szModule, name)) {
+        *outBase = (ULONG_PTR)me.modBaseAddr;
+        found = true;
+        break;
+      }
+      me.dwSize = sizeof(me);
+    } while (Module32NextW(snap, &me));
+  }
+  CloseHandle(snap);
+  return found;
+}
+
+static bool RemoteCallExport(
+    HANDLE proc,
+    DWORD pid,
+    const wchar_t* dllPath,
+    const char* exportName,
+    std::wstring* err) {
+  HMODULE local = LoadLibraryW(dllPath);
+  if (!local) {
+    SetErr(err, L"Локальный LoadLibrary cairo1c8.dll не удался");
+    return false;
+  }
+  FARPROC localFn = GetProcAddress(local, exportName);
+  if (!localFn) {
+    FreeLibrary(local);
+    SetErr(err, L"Экспорт Theme1C_Start не найден в DLL");
+    return false;
+  }
+  ptrdiff_t offset = (BYTE*)localFn - (BYTE*)local;
+  FreeLibrary(local);
+
+  ULONG_PTR remoteBase = 0;
+  for (int i = 0; i < 50; i++) {
+    if (ModuleBaseInProcess(pid, L"cairo1c8.dll", &remoteBase) && remoteBase) break;
+    Sleep(50);
+  }
+  if (!remoteBase) {
+    SetErr(err, L"База cairo1c8.dll в целевом процессе не найдена");
+    return false;
+  }
+
+  LPTHREAD_START_ROUTINE start = (LPTHREAD_START_ROUTINE)(remoteBase + (ULONG_PTR)offset);
+  HANDLE thread = CreateRemoteThread(proc, nullptr, 0, start, nullptr, 0, nullptr);
+  if (!thread) {
+    SetErr(err, L"CreateRemoteThread(Theme1C_Start) не удалось");
+    return false;
+  }
+  WaitForSingleObject(thread, 10000);
+  CloseHandle(thread);
+  return true;
+}
+
 bool InjectDll(DWORD pid, const wchar_t* dllPath, std::wstring* err) {
   if (!dllPath || !*dllPath) {
     SetErr(err, L"Пустой путь DLL");
@@ -130,7 +194,23 @@ bool InjectDll(DWORD pid, const wchar_t* dllPath, std::wstring* err) {
     return false;
   }
   if (ModuleLoadedInProcess(pid, L"cairo1c8.dll")) {
-    SetErr(err, L"Уже внедрена");
+    /* Already loaded — still try to start worker if needed. */
+    HANDLE proc = OpenProcess(
+        PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION |
+            PROCESS_VM_WRITE | PROCESS_VM_READ,
+        FALSE,
+        pid);
+    if (!proc) {
+      SetErr(err, L"Уже внедрена");
+      return true;
+    }
+    bool started = RemoteCallExport(proc, pid, dllPath, "Theme1C_Start", err);
+    CloseHandle(proc);
+    if (started) {
+      if (err) err->clear();
+      return true;
+    }
+    SetErr(err, L"Уже внедрена (старт worker не подтверждён)");
     return true;
   }
 
@@ -183,7 +263,6 @@ bool InjectDll(DWORD pid, const wchar_t* dllPath, std::wstring* err) {
   GetExitCodeThread(thread, &exitCode);
   CloseHandle(thread);
 
-  /* Give loader a moment, then verify module list */
   bool ok = false;
   for (int i = 0; i < 30; i++) {
     if (ModuleLoadedInProcess(pid, L"cairo1c8.dll")) {
@@ -194,12 +273,19 @@ bool InjectDll(DWORD pid, const wchar_t* dllPath, std::wstring* err) {
   }
 
   VirtualFreeEx(proc, remote, 0, MEM_RELEASE);
-  CloseHandle(proc);
 
   if (!ok) {
+    CloseHandle(proc);
     SetErr(err, L"LoadLibraryW выполнен, но cairo1c8.dll в процессе не найдена");
     return false;
   }
+
+  if (!RemoteCallExport(proc, pid, dllPath, "Theme1C_Start", err)) {
+    CloseHandle(proc);
+    return false;
+  }
+
+  CloseHandle(proc);
   if (err) err->clear();
   return true;
 }

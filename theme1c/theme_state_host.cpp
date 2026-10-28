@@ -1,100 +1,84 @@
 #include "theme_state_host.h"
 #include "theme_state_util.h"
+#include "appdata.h"
 
 #include <cstring>
 
 #include <windows.h>
 
-static HANDLE g_mapping = nullptr;
-static Theme1C_State* g_view = nullptr;
+static bool g_ready = false;
+static unsigned int g_generation = 0;
 
-bool ThemeState_OpenWriter() {
-  if (g_view) return true;
+static bool WriteStateAtomic(const wchar_t* finalPath, const Theme1C_State* state) {
+  if (!finalPath || !state) return false;
 
-  HANDLE map = CreateFileMappingW(
-      INVALID_HANDLE_VALUE,
-      nullptr,
-      PAGE_READWRITE,
-      0,
-      (DWORD)sizeof(Theme1C_State),
-      THEME1C_STATE_MAPPING_NAME);
-  if (!map) return false;
+  wchar_t tmp[MAX_PATH * 2];
+  size_t i = 0;
+  while (finalPath[i] && i + 5 < sizeof(tmp) / sizeof(tmp[0])) {
+    tmp[i] = finalPath[i];
+    i++;
+  }
+  if (i + 5 >= sizeof(tmp) / sizeof(tmp[0])) return false;
+  tmp[i++] = L'.';
+  tmp[i++] = L't';
+  tmp[i++] = L'm';
+  tmp[i++] = L'p';
+  tmp[i] = 0;
 
-  void* view = MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Theme1C_State));
-  if (!view) {
-    CloseHandle(map);
+  HANDLE h = CreateFileW(tmp, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (h == INVALID_HANDLE_VALUE) return false;
+  DWORD wrote = 0;
+  BOOL ok = WriteFile(h, state, (DWORD)sizeof(Theme1C_State), &wrote, nullptr);
+  CloseHandle(h);
+  if (!ok || wrote != sizeof(Theme1C_State)) {
+    DeleteFileW(tmp);
     return false;
   }
-
-  g_mapping = map;
-  g_view = (Theme1C_State*)view;
-
-  /* First open: initialize if magic missing. */
-  if (g_view->magic != THEME1C_STATE_MAGIC || g_view->version != THEME1C_STATE_VERSION) {
-    Theme1C_State init;
-    Theme1C_State_FillDarkPlus(&init);
-    init.generation = 0;
-    ThemeState_Publish(&init);
+  if (!MoveFileExW(tmp, finalPath, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    DeleteFileW(tmp);
+    return false;
   }
   return true;
 }
 
+bool ThemeState_OpenWriter() {
+  wchar_t root[MAX_PATH * 2];
+  if (!Theme1C_GetRootDir(root, sizeof(root) / sizeof(root[0]))) return false;
+  if (!Theme1C_EnsureDir(root)) return false;
+  g_ready = true;
+  return true;
+}
+
 void ThemeState_CloseWriter() {
-  if (g_view) {
-    UnmapViewOfFile(g_view);
-    g_view = nullptr;
-  }
-  if (g_mapping) {
-    CloseHandle(g_mapping);
-    g_mapping = nullptr;
-  }
+  g_ready = false;
 }
 
 bool ThemeState_IsOpen() {
-  return g_view != nullptr;
+  return g_ready;
 }
 
 void ThemeState_Publish(const Theme1C_State* state) {
   if (!state) return;
-  if (!g_view && !ThemeState_OpenWriter()) return;
-
-  unsigned int gen = g_view->generation;
-  /* seqlock: odd = write in progress */
-  unsigned int nextOdd = (gen & ~1u) + 1u;
-  MemoryBarrier();
-  g_view->generation = nextOdd;
-  MemoryBarrier();
+  if (!g_ready && !ThemeState_OpenWriter()) return;
 
   Theme1C_State copy = *state;
   copy.magic = THEME1C_STATE_MAGIC;
   copy.version = THEME1C_STATE_VERSION;
-  /* Preserve odd generation during payload write; bump to even after. */
-  copy.generation = nextOdd;
+  /* Keep generation even (stable). Odd reserved for in-progress writers. */
+  g_generation += 2;
+  if (g_generation == 0) g_generation = 2;
+  copy.generation = g_generation;
 
-  /* Copy fields except generation first via byte copy of body, then finalize. */
-  g_view->magic = copy.magic;
-  g_view->version = copy.version;
-  g_view->enabled = copy.enabled;
-  g_view->matchKeyword = copy.matchKeyword;
-  g_view->matchString = copy.matchString;
-  g_view->matchComment = copy.matchComment;
-  g_view->matchIdentifier = copy.matchIdentifier;
-  g_view->matchDirective = copy.matchDirective;
-  g_view->outKeyword = copy.outKeyword;
-  g_view->outString = copy.outString;
-  g_view->outComment = copy.outComment;
-  g_view->outIdentifier = copy.outIdentifier;
-  g_view->outDirective = copy.outDirective;
-  g_view->editorBg = copy.editorBg;
-  g_view->sidebar = copy.sidebar;
-  g_view->menu = copy.menu;
-  g_view->text = copy.text;
-  g_view->captionGray = copy.captionGray;
-  g_view->legacyEditorBg = copy.legacyEditorBg;
+  wchar_t appPath[MAX_PATH * 2];
+  if (Theme1C_GetStatePath(appPath, sizeof(appPath) / sizeof(appPath[0]))) {
+    WriteStateAtomic(appPath, &copy);
+  }
 
-  MemoryBarrier();
-  g_view->generation = nextOdd + 1u; /* even = stable */
-  MemoryBarrier();
+  /* Mirror next to exe/dll so freestanding reader can fall back without APPDATA. */
+  wchar_t exePath[MAX_PATH * 2];
+  if (Theme1C_GetExeDirStatePath(exePath, sizeof(exePath) / sizeof(exePath[0]))) {
+    WriteStateAtomic(exePath, &copy);
+  }
 }
 
 void ThemeState_PublishDarkPlus(unsigned int enabled) {

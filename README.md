@@ -5,24 +5,22 @@
 ## Архитектура
 
 - **`Theme1C.exe`** — постоянный host в трее (не короткий лаунчер). При старте может открыть `1cestart.exe` (путь настраивается). Следит за процессами **DESIGNER** и при включённом auto-inject внедряет DLL; также есть ручное **Apply**.
-- **`cairo1c8.dll`** — freestanding-хук в процессе конфигуратора:
-  - IAT `grphcs.dll` → cairo (`set_source_rgb/rgba`, gradient stop, mesh corner);
-  - GDI/syscolor по загруженным модулям;
-  - точечная подмена палитры в `core83.dll` по фиксированным RVA (привязка к конкретной сборке платформы).
-- Состояние темы — shared mapping `Local\Theme1C_State` между host и DLL.
+- **`cairo1c8.dll`** — freestanding-хук в процессе конфигуратора (IAT cairo через `grphcs.dll`). Старт worker через экспорт `Theme1C_Start` после `LoadLibrary` (не из `DllMain`).
+- **Состояние темы** — файл `%AppData%\Theme1C\state.bin` (и зеркало рядом с exe). Host атомарно пишет IR→state; DLL читает `ReadFile` раз в ~500 мс. Named mmap не используется.
 
-Класть exe рядом с `bin` платформы **не нужно**: достаточно держать `Theme1C.exe` и `cairo1c8.dll` **в одном каталоге** (DLL ищется рядом с exe).
+Класть exe рядом с `bin` платформы **не нужно**: `Theme1C.exe`, `cairo1c8.dll` и папка `builtin\` в одном каталоге.
 
 ## Настройки (UI из трея)
 
 - Включение/выключение хуков
-- Выбор темы, правка цветов, импорт тем VS Code
-- Путь к `1cestart.exe`, автозапуск стартера, auto-inject
+- Выбор темы (builtin **Dark+**, **RubyBlue**), правка цветов, **импорт тем VS Code**
+- Путь к `1cestart.exe`, автозапуск стартера, auto-inject / ручной Apply
 
 Данные: `%AppData%\Theme1C\`
 
 - `config.json` — hooks, active theme, пути, флаги
 - `themes\` — JSON тем в формате Theme IR
+- `state.bin` — runtime-снимок для DLL
 
 ## Theme IR (кратко)
 
@@ -48,11 +46,10 @@ build.bat
 
 ## Ограничения
 
-- Только **x64**
-- Фокус на **DESIGNER** (не предприятие)
-- RVA в `core83` хрупкие при смене сборки платформы
-- Эвристики отрисовки (формы / редактор) в UI не выведены
-- Нет упаковки и автотестов под все релизы 1С
+- Только **x64**, фокус на **DESIGNER**
+- Патч RVA `core83` отключён (ломал 8.3.27); тема идёт через cairo-хуки
+- Эвристики lum/warmPaper в UI не выведены
+- Антивирус может мешать инжекту — это вне кода проекта
 
 ## Структура `theme1c/`
 

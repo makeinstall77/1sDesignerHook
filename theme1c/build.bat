@@ -36,12 +36,20 @@ if errorlevel 1 (
   exit /b 1
 )
 
-REM --- Stub import lib for freestanding DLL (explicit OpenFileMappingW / MapViewOfFile / …) ---
-lib /nologo /def:kernel32.def /machine:x64 /out:kernel32.lib
+REM Old stub names shadow real SDK import libs if left in this directory.
+if exist kernel32.lib del /q kernel32.lib
+if exist kernel32.exp del /q kernel32.exp
+if exist user32.lib del /q user32.lib
+if exist user32.exp del /q user32.exp
+if exist shell32.lib del /q shell32.lib
+if exist shell32.exp del /q shell32.exp
+
+REM --- Stub import lib for freestanding DLL (NOT named kernel32.lib — that shadows SDK) ---
+lib /nologo /def:kernel32.def /machine:x64 /out:kernel32_fs.lib
 if errorlevel 1 exit /b 1
 
 REM --- cairo1c8.dll: freestanding, no CRT ---
-cl /nologo /O2 /Oi- /GS- /GR- /EHs-c- /W3 /utf-8 /LD cairo1c.cpp crtfix.cpp /link /NODEFAULTLIB /ENTRY:DllMain "%~dp0kernel32.lib" /OUT:cairo1c8.dll
+cl /nologo /O2 /Oi- /GS- /GR- /EHs-c- /W3 /utf-8 /LD cairo1c.cpp crtfix.cpp /link /NODEFAULTLIB /ENTRY:DllMain /EXPORT:Theme1C_Start "%~dp0kernel32_fs.lib" /OUT:cairo1c8.dll
 if errorlevel 1 exit /b 1
 
 REM --- Theme1C.exe: tray host WITH CRT (do not compile launcher.cpp) ---
@@ -49,7 +57,7 @@ cl /nologo /O2 /W3 /EHsc /std:c++17 /utf-8 /DUNICODE /D_UNICODE ^
   tray_main.cpp inject.cpp settings_ui.cpp onec_paths.cpp ^
   theme_ir.cpp appdata.cpp config.cpp theme_convert.cpp theme_state_host.cpp ^
   /link /SUBSYSTEM:WINDOWS /OUT:Theme1C.exe ^
-  user32.lib shell32.lib gdi32.lib comctl32.lib advapi32.lib ole32.lib comdlg32.lib
+  kernel32.lib user32.lib shell32.lib gdi32.lib comctl32.lib advapi32.lib ole32.lib comdlg32.lib
 if errorlevel 1 exit /b 1
 
 echo BUILD_OK

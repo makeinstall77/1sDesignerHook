@@ -1,5 +1,6 @@
 #include "appdata.h"
 #include "theme_ir.h"
+#include "theme_state.h"
 
 #include <cstring>
 
@@ -59,6 +60,26 @@ bool Theme1C_GetThemePath(const wchar_t* themeId, wchar_t* out, size_t capChars)
   if (!CatW(out, capChars, L"\\")) return false;
   if (!CatW(out, capChars, themeId)) return false;
   return CatW(out, capChars, L".json");
+}
+
+bool Theme1C_GetStatePath(wchar_t* out, size_t capChars) {
+  if (!Theme1C_GetRootDir(out, capChars)) return false;
+  return CatW(out, capChars, L"\\") && CatW(out, capChars, THEME1C_STATE_FILE_NAME);
+}
+
+bool Theme1C_GetExeDirStatePath(wchar_t* out, size_t capChars) {
+  if (!out || capChars < 8) return false;
+  wchar_t mod[MAX_PATH];
+  DWORD n = GetModuleFileNameW(nullptr, mod, MAX_PATH);
+  if (n == 0 || n >= MAX_PATH) return false;
+  int slash = -1;
+  for (DWORD i = 0; i < n; i++) {
+    if (mod[i] == L'\\' || mod[i] == L'/') slash = (int)i;
+  }
+  if (slash < 0) return false;
+  mod[slash] = 0;
+  if (!CopyW(out, capChars, mod)) return false;
+  return CatW(out, capChars, L"\\") && CatW(out, capChars, THEME1C_STATE_FILE_NAME);
 }
 
 bool Theme1C_EnsureDir(const wchar_t* path) {
@@ -134,23 +155,39 @@ bool Theme1C_EnsureAppDataLayout() {
   if (!Theme1C_GetThemesDir(themes, sizeof(themes) / sizeof(themes[0]))) return false;
   if (!Theme1C_EnsureDir(themes)) return false;
 
-  wchar_t dest[MAX_PATH * 2];
-  if (!Theme1C_GetThemePath(L"dark-plus", dest, sizeof(dest) / sizeof(dest[0]))) return false;
-  if (GetFileAttributesW(dest) != INVALID_FILE_ATTRIBUTES) return true;
-
-  /* Copy from repo builtin if present; else synthesize IR. */
-  wchar_t src[MAX_PATH * 2];
-  bool copied = false;
-  if (Theme1C_GetBuiltinDarkPlusRepoPath(src, sizeof(src) / sizeof(src[0]))) {
-    if (GetFileAttributesW(src) != INVALID_FILE_ATTRIBUTES) {
-      if (CopyFileW(src, dest, TRUE)) copied = true;
+  /* Seed builtins when missing (copy from exe\builtin\, else synthesize Dark+). */
+  {
+    wchar_t dest[MAX_PATH * 2];
+    wchar_t mod[MAX_PATH];
+    wchar_t src[MAX_PATH * 2];
+    const wchar_t* ids[] = {L"dark-plus", L"ruby-blue"};
+    const wchar_t* files[] = {L"dark-plus.json", L"ruby-blue.json"};
+    DWORD n = GetModuleFileNameW(nullptr, mod, MAX_PATH);
+    int slash = -1;
+    if (n && n < MAX_PATH) {
+      for (DWORD i = 0; i < n; i++) {
+        if (mod[i] == L'\\' || mod[i] == L'/') slash = (int)i;
+      }
+      if (slash >= 0) mod[slash] = 0;
     }
-  }
-  if (!copied) {
-    ThemeIr ir;
-    ThemeIr_LoadBuiltinDarkPlus(&ir);
-    std::wstring err;
-    if (!ThemeIr_SaveFile(dest, &ir, &err)) return false;
+    for (int t = 0; t < 2; t++) {
+      if (!Theme1C_GetThemePath(ids[t], dest, sizeof(dest) / sizeof(dest[0]))) continue;
+      if (GetFileAttributesW(dest) != INVALID_FILE_ATTRIBUTES) continue;
+      bool copied = false;
+      if (slash >= 0 &&
+          CopyW(src, sizeof(src) / sizeof(src[0]), mod) &&
+          CatW(src, sizeof(src) / sizeof(src[0]), L"\\builtin\\") &&
+          CatW(src, sizeof(src) / sizeof(src[0]), files[t]) &&
+          GetFileAttributesW(src) != INVALID_FILE_ATTRIBUTES) {
+        copied = CopyFileW(src, dest, TRUE) != 0;
+      }
+      if (!copied && t == 0) {
+        ThemeIr ir;
+        ThemeIr_LoadBuiltinDarkPlus(&ir);
+        std::wstring err;
+        ThemeIr_SaveFile(dest, &ir, &err);
+      }
+    }
   }
   return true;
 }

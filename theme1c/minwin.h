@@ -39,9 +39,11 @@ typedef DWORD* LPDWORD;
 #define WAIT_OBJECT_0 0
 #define STILL_ACTIVE 259
 
+#define GENERIC_READ 0x80000000
 #define GENERIC_WRITE 0x40000000
 #define FILE_SHARE_READ 0x00000001
 #define FILE_SHARE_WRITE 0x00000002
+#define OPEN_EXISTING 3
 #define OPEN_ALWAYS 4
 #define FILE_ATTRIBUTE_NORMAL 0x80
 #define FILE_APPEND_DATA 0x0004
@@ -109,8 +111,10 @@ __declspec(dllimport) void* WINAPI GetProcAddress(HMODULE, LPCSTR);
 __declspec(dllimport) DWORD WINAPI GetModuleFileNameW(HMODULE, LPWSTR, DWORD);
 __declspec(dllimport) DWORD WINAPI GetCurrentProcessId(void);
 __declspec(dllimport) HANDLE WINAPI CreateFileW(LPCWSTR, DWORD, DWORD, void*, DWORD, DWORD, HANDLE);
+__declspec(dllimport) BOOL WINAPI ReadFile(HANDLE, LPVOID, DWORD, DWORD*, void*);
 __declspec(dllimport) BOOL WINAPI WriteFile(HANDLE, LPCVOID, DWORD, DWORD*, void*);
 __declspec(dllimport) BOOL WINAPI CloseHandle(HANDLE);
+__declspec(dllimport) DWORD WINAPI GetEnvironmentVariableW(LPCWSTR, LPWSTR, DWORD);
 __declspec(dllimport) void WINAPI Sleep(DWORD);
 __declspec(dllimport) DWORD WINAPI GetTickCount(void);
 __declspec(dllimport) HANDLE WINAPI CreateThread(void*, SIZE_T, DWORD (WINAPI*)(LPVOID), LPVOID, DWORD, DWORD*);
@@ -142,8 +146,7 @@ __declspec(dllimport) LPWSTR* WINAPI CommandLineToArgvW(LPCWSTR, int*);
 __declspec(dllimport) HANDLE WINAPI LocalFree(HANDLE);
 }
 
-#pragma function(memset)
-#pragma function(memcpy)
+/* Provided by crtfix.cpp — no #pragma function (build uses /Oi-). */
 extern "C" void* memset(void* dst, int value, SIZE_T count);
 extern "C" void* memcpy(void* dst, const void* src, SIZE_T count);
 extern "C" int _fltused;
