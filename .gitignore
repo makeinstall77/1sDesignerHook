@@ -1,0 +1,22 @@
+# Build intermediates
+*.obj
+*.exp
+*.lib
+*.pdb
+*.ilk
+
+# Runtime / old iteration binaries (keep only cairo1c8 + Theme1C if committed)
+theme1c/cairo1c.dll
+theme1c/cairo1c2.dll
+theme1c/cairo1c3.dll
+theme1c/cairo1c4.dll
+theme1c/cairo1c5.dll
+theme1c/cairo1c6.dll
+theme1c/cairo1c7.dll
+theme1c/cairo1c.log
+
+# Editor / OS
+.vs/
+*.user
+Thumbs.db
+Desktop.ini
