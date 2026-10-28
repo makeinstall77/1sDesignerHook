@@ -46,6 +46,9 @@ typedef DWORD* LPDWORD;
 #define FILE_ATTRIBUTE_NORMAL 0x80
 #define FILE_APPEND_DATA 0x0004
 
+#define SECTION_MAP_READ 0x0004
+#define FILE_MAP_READ SECTION_MAP_READ
+
 #define TH32CS_SNAPMODULE 0x00000008
 #define MAX_PATH 260
 #define MB_OK 0
@@ -109,10 +112,14 @@ __declspec(dllimport) HANDLE WINAPI CreateFileW(LPCWSTR, DWORD, DWORD, void*, DW
 __declspec(dllimport) BOOL WINAPI WriteFile(HANDLE, LPCVOID, DWORD, DWORD*, void*);
 __declspec(dllimport) BOOL WINAPI CloseHandle(HANDLE);
 __declspec(dllimport) void WINAPI Sleep(DWORD);
+__declspec(dllimport) DWORD WINAPI GetTickCount(void);
 __declspec(dllimport) HANDLE WINAPI CreateThread(void*, SIZE_T, DWORD (WINAPI*)(LPVOID), LPVOID, DWORD, DWORD*);
 __declspec(dllimport) BOOL WINAPI DisableThreadLibraryCalls(HMODULE);
 __declspec(dllimport) BOOL WINAPI VirtualProtect(LPVOID, SIZE_T, DWORD, DWORD*);
 __declspec(dllimport) DWORD WINAPI GetLastError(void);
+__declspec(dllimport) HANDLE WINAPI OpenFileMappingW(DWORD, BOOL, LPCWSTR);
+__declspec(dllimport) LPVOID WINAPI MapViewOfFile(HANDLE, DWORD, DWORD, DWORD, SIZE_T);
+__declspec(dllimport) BOOL WINAPI UnmapViewOfFile(LPCVOID);
 
 __declspec(dllimport) BOOL WINAPI CreateProcessW(LPCWSTR, LPWSTR, void*, void*, BOOL, DWORD, void*, LPCWSTR, STARTUPINFOW*, PROCESS_INFORMATION*);
 __declspec(dllimport) BOOL WINAPI WriteProcessMemory(HANDLE, LPVOID, LPCVOID, SIZE_T, SIZE_T*);

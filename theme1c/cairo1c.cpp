@@ -1,4 +1,7 @@
 #include "minwin.h"
+#include "theme_state.h"
+#include "theme_state_util.h"
+#include "theme_state_client.h"
 
 // Configurator chrome is drawn by grphcs.dll through cairo.dll.
 // WebKit (syntax assistant) also imports cairo, so only grphcs.dll's
@@ -19,6 +22,12 @@ static int g_logged = 0;
 static DWORD g_seen[64];
 static int g_seenCount = 0;
 
+static Theme1C_State g_theme;
+static int g_themeReady = 0;
+static HANDLE g_themeMap = 0;
+static const volatile Theme1C_State* g_themeView = 0;
+static DWORD g_themeTick = 0;
+
 static int Channel(double v) {
     if (v < 0) v = 0;
     if (v > 1) v = 1;
@@ -34,33 +43,81 @@ static int NearColor(double r, double g, double b, int R, int G, int B) {
     return d <= 12;
 }
 
+static int NearRgb(double r, double g, double b, Theme1C_Rgb c) {
+    return NearColor(r, g, b, c.r, c.g, c.b);
+}
+
 static void SetRgb8(double* r, double* g, double* b, int R, int G, int B) {
     *r = R / 255.0;
     *g = G / 255.0;
     *b = B / 255.0;
 }
 
-// Default 1C module colors seen in this build, retargeted to VS Code Dark+.
-// Saturated colors that are not in this table (icons, selection) stay as they are.
+static void SetRgbC(double* r, double* g, double* b, Theme1C_Rgb c) {
+    SetRgb8(r, g, b, c.r, c.g, c.b);
+}
+
+static void RefreshTheme(void) {
+    DWORD now = GetTickCount();
+    Theme1C_State tmp;
+    int i;
+
+    if (g_themeReady && (now - g_themeTick) < 500u) return;
+    g_themeTick = now;
+
+    if (!g_themeView) Theme1C_Client_Open(&g_themeMap, &g_themeView);
+
+    if (!g_themeView) {
+        Theme1C_State_FillDarkPlus(&g_theme);
+        g_themeReady = 1;
+        return;
+    }
+
+    for (i = 0; i < 8; i++) {
+        if (Theme1C_Client_TryCopy(g_themeView, &tmp)) {
+            g_theme = tmp;
+            g_themeReady = 1;
+            return;
+        }
+    }
+
+    if (!g_themeReady) {
+        Theme1C_State_FillDarkPlus(&g_theme);
+        g_themeReady = 1;
+    }
+}
+
+static int ThemeEnabled(void) {
+    RefreshTheme();
+    return g_theme.enabled != 0;
+}
+
+static const Theme1C_State* Theme(void) {
+    RefreshTheme();
+    return &g_theme;
+}
+
+// Syntax fingerprints from match*, outputs from out* (shared state / Dark+ defaults).
 static int MapSyntax(double* r, double* g, double* b) {
-    if (NearColor(*r, *g, *b, 210, 76, 21)) {
-        SetRgb8(r, g, b, 197, 134, 192); // keywords #C586C0
+    const Theme1C_State* s = Theme();
+    if (NearRgb(*r, *g, *b, s->matchKeyword)) {
+        SetRgbC(r, g, b, s->outKeyword);
         return 1;
     }
-    if (NearColor(*r, *g, *b, 212, 47, 51)) {
-        SetRgb8(r, g, b, 206, 145, 120); // strings #CE9178
+    if (NearRgb(*r, *g, *b, s->matchString)) {
+        SetRgbC(r, g, b, s->outString);
         return 1;
     }
-    if (NearColor(*r, *g, *b, 137, 154, 51)) {
-        SetRgb8(r, g, b, 106, 153, 85); // comments #6A9955
+    if (NearRgb(*r, *g, *b, s->matchComment)) {
+        SetRgbC(r, g, b, s->outComment);
         return 1;
     }
-    if (NearColor(*r, *g, *b, 37, 139, 211)) {
-        SetRgb8(r, g, b, 156, 220, 254); // identifiers #9CDCFE
+    if (NearRgb(*r, *g, *b, s->matchIdentifier)) {
+        SetRgbC(r, g, b, s->outIdentifier);
         return 1;
     }
-    if (NearColor(*r, *g, *b, 213, 53, 132)) {
-        SetRgb8(r, g, b, 86, 156, 214); // directives #569CD6
+    if (NearRgb(*r, *g, *b, s->matchDirective)) {
+        SetRgbC(r, g, b, s->outDirective);
         return 1;
     }
     return 0;
@@ -140,6 +197,7 @@ static int IsFormPaint(void) {
 }
 
 static void MapColor(double* r, double* g, double* b) {
+    const Theme1C_State* s;
     double R = *r;
     double G = *g;
     double B = *b;
@@ -151,6 +209,10 @@ static void MapColor(double* r, double* g, double* b) {
     if (G > 1) G = 1;
     if (B > 1) B = 1;
 
+    if (!ThemeEnabled()) return;
+
+    s = Theme();
+
     if (MapSyntax(&R, &G, &B)) {
         *r = R;
         *g = G;
@@ -160,12 +222,12 @@ static void MapColor(double* r, double* g, double* b) {
 
     // Module editor background in this build is a dark cyan, not paper white.
     if (NearColor(R, G, B, 0, 43, 54) || NearColor(R, G, B, 0, 42, 54)) {
-        SetRgb8(r, g, b, 30, 30, 30);
+        SetRgbC(r, g, b, s->editorBg);
         return;
     }
     // Form window caption. Keep it chrome, not text.
     if (NearColor(R, G, B, 150, 150, 150)) {
-        SetRgb8(r, g, b, 37, 37, 38);
+        SetRgbC(r, g, b, s->captionGray);
         return;
     }
 
@@ -180,22 +242,21 @@ static void MapColor(double* r, double* g, double* b) {
     int warmPaper = (R > 0.72 && G > 0.68 && B > 0.55 && sat < 0.18 && R + 0.03 >= G && G + 0.03 >= B);
     if (sat >= 0.10 && !warmPaper) return;
 
-    // Exact VS Code text grays must survive, otherwise operators typed in the
-    // module settings get painted as a background.
-    if (NearColor(R, G, B, 212, 212, 212) || NearColor(R, G, B, 204, 204, 204) || NearColor(R, G, B, 187, 187, 187)) return;
-    if (NearColor(R, G, B, 30, 30, 30) || NearColor(R, G, B, 37, 37, 38) || NearColor(R, G, B, 51, 51, 51)) return;
+    // Already-themed grays must survive (operators / chrome already remapped).
+    if (NearRgb(R, G, B, s->text) || NearColor(R, G, B, 204, 204, 204) || NearColor(R, G, B, 187, 187, 187)) return;
+    if (NearRgb(R, G, B, s->editorBg) || NearRgb(R, G, B, s->sidebar) || NearRgb(R, G, B, s->menu)) return;
     if (NearColor(R, G, B, 136, 136, 136)) return;
 
-    // VS Code Dark+: white panels -> sidebar, gray chrome -> menu bar, the rest is text.
+    // warmPaper / high lum -> sidebar; mid lum -> menu; else text.
     if (warmPaper || lum >= 0.94) {
-        SetRgb8(r, g, b, 37, 37, 38);
+        SetRgbC(r, g, b, s->sidebar);
         return;
     }
     if (lum >= 0.78) {
-        SetRgb8(r, g, b, 51, 51, 51);
+        SetRgbC(r, g, b, s->menu);
         return;
     }
-    SetRgb8(r, g, b, 212, 212, 212);
+    SetRgbC(r, g, b, s->text);
 }
 
 static void LogLine(const char* text) {
@@ -376,29 +437,36 @@ static DWORD Pack(int r, int g, int b) {
     return (DWORD)(r | (g << 8) | (b << 16));
 }
 
+static DWORD PackRgb(Theme1C_Rgb c) {
+    return Pack(c.r, c.g, c.b);
+}
+
 static DWORD MapSys(int index) {
+    const Theme1C_State* s;
+    if (!ThemeEnabled()) return 0xFFFFFFFF;
+    s = Theme();
     switch (index) {
     case 0:
     case 1:
     case 4:
     case 5:
     case 12:
-        return Pack(30, 30, 30);
+        return PackRgb(s->editorBg);
     case 15:
-        return Pack(45, 45, 45);
+        return PackRgb(s->sidebar);
     case 6:
     case 10:
     case 11:
     case 16:
-        return Pack(62, 62, 66);
+        return PackRgb(s->menu);
     case 20:
-        return Pack(60, 60, 60);
+        return PackRgb(s->menu);
     case 7:
     case 8:
     case 9:
     case 18:
     case 19:
-        return Pack(212, 212, 212);
+        return PackRgb(s->text);
     case 17:
         return Pack(160, 160, 160);
     case 13:
@@ -411,6 +479,7 @@ static DWORD MapSys(int index) {
 }
 
 static DWORD LightenText(DWORD color) {
+    const Theme1C_State* s;
     if (color == 0xFFFFFFFF) return color;
     int r = (int)(color & 255);
     int g = (int)((color >> 8) & 255);
@@ -423,10 +492,12 @@ static DWORD LightenText(DWORD color) {
     if (b < min) min = b;
     if (max - min > 28) return color;
     if (max >= 230) return color;
-    return Pack(212, 212, 212);
+    s = Theme();
+    return PackRgb(s->text);
 }
 
 static DWORD WINAPI HookSetText(void* hdc, DWORD color) {
+    if (!ThemeEnabled()) return g_setText(hdc, color);
     return g_setText(hdc, LightenText(color));
 }
 
@@ -576,15 +647,25 @@ static void PatchRva(HMODULE mod, DWORD rva, DWORD color) {
 }
 
 static void PatchConfiguratorPalette(void) {
-    HMODULE core = GetModuleHandleW(L"core83.dll");
-    if (!core) return;
-    DWORD ink = Pack(212, 212, 212);
-    DWORD menu = Pack(51, 51, 51);
-    DWORD side = Pack(37, 37, 38);
+    const Theme1C_State* s;
+    HMODULE core;
+    DWORD ink, menu, side;
     DWORD textRvas[] = {
         0x3C2A3C, 0x3C2A40, 0x3C2A64, 0x3C2A70, 0x3C2A6C,
         0x3C2A0C, 0x3C2A10, 0x3C29F8, 0x3C29F4, 0x3C2968
     };
+
+    if (!ThemeEnabled()) {
+        LogLine("core palette skipped (disabled)\n");
+        return;
+    }
+
+    core = GetModuleHandleW(L"core83.dll");
+    if (!core) return;
+    s = Theme();
+    ink = PackRgb(s->text);
+    menu = PackRgb(s->menu);
+    side = PackRgb(s->sidebar);
     for (int i = 0; i < 10; i++) PatchRva(core, textRvas[i], ink);
     PatchRva(core, 0x3C2AB0, menu);
     PatchRva(core, 0x3C2A38, menu);
@@ -596,6 +677,10 @@ static void PatchConfiguratorPalette(void) {
 
 static DWORD WINAPI Worker(LPVOID) {
     Sleep(50);
+    RefreshTheme();
+    if (g_themeView) LogLine("theme state mapping open\n");
+    else LogLine("theme state mapping missing, Dark+ defaults\n");
+
     HMODULE gdi = GetModuleHandleW(L"gdi32.dll");
     if (gdi) g_solid = (SolidBrushFn)GetProcAddress(gdi, "CreateSolidBrush");
     for (int i = 0; i < 600 && !g_patched; i++) {
@@ -614,6 +699,7 @@ static DWORD WINAPI Worker(LPVOID) {
     PatchConfiguratorPalette();
     int gdiHits = 0;
     for (int i = 0; i < 80; i++) {
+        RefreshTheme();
         gdiHits += PatchLoadedGdi();
         Sleep(250);
     }

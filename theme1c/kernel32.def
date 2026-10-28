@@ -12,17 +12,21 @@ EXPORTS
     GetCurrentProcessId
     GetExitCodeProcess
     GetLastError
+    GetTickCount
     LocalFree
     GetModuleFileNameW
     GetModuleHandleW
     GetProcAddress
     LoadLibraryW
+    MapViewOfFile
     Module32FirstW
     Module32NextW
+    OpenFileMappingW
     QueueUserAPC
     ResumeThread
     SetCurrentDirectoryW
     Sleep
+    UnmapViewOfFile
     VirtualAllocEx
     VirtualFreeEx
     VirtualProtect

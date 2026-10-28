@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "dark-plus",
+  "displayName": "Dark+",
+  "source": "builtin",
+  "sourceFormat": "theme1c",
+  "syntax": [
+    {"role":"keyword","matchRgb":[210,76,21],"outRgb":[197,134,192]},
+    {"role":"string","matchRgb":[212,47,51],"outRgb":[206,145,120]},
+    {"role":"comment","matchRgb":[137,154,51],"outRgb":[106,153,85]},
+    {"role":"identifier","matchRgb":[37,139,211],"outRgb":[156,220,254]},
+    {"role":"directive","matchRgb":[213,53,132],"outRgb":[86,156,214]}
+  ],
+  "chrome": {
+    "editorBg": [30,30,30],
+    "sidebar": [37,37,38],
+    "menu": [51,51,51],
+    "text": [212,212,212],
+    "captionGray": [37,37,38]
+  }
+}

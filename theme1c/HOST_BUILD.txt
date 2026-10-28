@@ -1,0 +1,12 @@
+Theme1C host build
+==================
+
+See build.bat in this directory.
+
+Summary:
+  - cairo1c8.dll  — freestanding (cairo1c.cpp + crtfix.cpp, /NODEFAULTLIB)
+  - Theme1C.exe   — tray host WITH CRT (tray_main.cpp + inject/settings/…; NOT launcher.cpp)
+
+Run:
+  cd theme1c
+  build.bat

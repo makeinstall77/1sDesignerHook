@@ -1,48 +1,70 @@
 # 1sDesignerHook / Theme1C
 
-Брошенный прототип тёмной темы для **Конфигуратора 1С** (только DESIGNER). Платформенные файлы не меняются: рядом с запуском кладётся DLL, лаунчер поднимает `1cv8.exe DESIGNER` и внедряет её в новый процесс.
+Тёмная тема для **Конфигуратора 1С** (DESIGNER): tray-хост `Theme1C.exe` и runtime-хук `cairo1c8.dll`. Платформенные файлы на диске не меняются.
 
-## Что уже сделано
+## Архитектура
 
-- **`Theme1C.exe`** — запуск конфигуратора в suspended-состоянии, инъекция `cairo1c8.dll` (APC → fallback `CreateRemoteThread`). Режим ENTERPRISE намеренно запрещён.
-- **`cairo1c8.dll`** — runtime-хук без правки файлов на диске:
+- **`Theme1C.exe`** — постоянный host в трее (не короткий лаунчер). При старте может открыть `1cestart.exe` (путь настраивается). Следит за процессами **DESIGNER** и при включённом auto-inject внедряет DLL; также есть ручное **Apply**.
+- **`cairo1c8.dll`** — freestanding-хук в процессе конфигуратора:
   - IAT `grphcs.dll` → cairo (`set_source_rgb/rgba`, gradient stop, mesh corner);
-  - GDI/syscolor (`SetTextColor`, `SetBkColor`, `GetSysColor*`) по загруженным модулям;
+  - GDI/syscolor по загруженным модулям;
   - точечная подмена палитры в `core83.dll` по фиксированным RVA (привязка к конкретной сборке платформы).
-- Маппинг цветов близок к **VS Code Dark+** (фон модуля, chrome, подсветка синтаксиса по известным RGB из этой сборки).
-- Freestanding-сборка без CRT: `build.bat` + `minwin.h` + `crtfix.cpp` (MSVC x64).
-- По логу `cairo1c.log` патч cairo в `grphcs` отрабатывал на машине автора прототипа.
+- Состояние темы — shared mapping `Local\Theme1C_State` между host и DLL.
 
-## Чего нет / ограничения
+Класть exe рядом с `bin` платформы **не нужно**: достаточно держать `Theme1C.exe` и `cairo1c8.dll` **в одном каталоге** (DLL ищется рядом с exe).
 
-- Нет стабилизации под разные релизы платформы (RVA в `core83` хрупкие).
-- Разделение «отрисовка форм / редактор» через стек (`IsFormPaint`) выключено.
-- Нет упаковки, автотестов, поддержки уже запущенного `1cv8`, темы для предприятия.
-- Репозиторий заведён постфактум по переданному прототипу; история итераций `cairo1c`…`cairo1c7` в git не тащится.
+## Настройки (UI из трея)
+
+- Включение/выключение хуков
+- Выбор темы, правка цветов, импорт тем VS Code
+- Путь к `1cestart.exe`, автозапуск стартера, auto-inject
+
+Данные: `%AppData%\Theme1C\`
+
+- `config.json` — hooks, active theme, пути, флаги
+- `themes\` — JSON тем в формате Theme IR
+
+## Theme IR (кратко)
+
+`schemaVersion: 1`. Поля: `id`, `displayName`, `source` (`builtin` | `custom` | `imported`), `sourceFormat`, опционально `sourcePath`; палитра chrome (`editorBg`, `sidebar`, `menu`, `text`, `captionGray`); массив `syntax[]` с ролями (`keyword` | `string` | `comment` | `identifier` | `directive`) и парами `matchRgb` / `outRgb`.
+
+Конвертеры импорта реализуют `IThemeConverter` (`FormatId`, `DisplayName`, `CanParse`, `Convert` → `ThemeIr`). Сейчас есть VS Code; чтобы добавить формат — новый класс в `theme_convert.cpp`, регистрация в `g_converters[]`.
 
 ## Сборка
 
-Нужен MSVC Build Tools (путь в `theme1c\build.bat` при необходимости поправить):
+Нужен MSVC x64 (Build Tools / VS) с Windows SDK. `build.bat` ищет установку через `vswhere` и вызывает `vcvars64.bat`.
 
 ```bat
 cd theme1c
 build.bat
 ```
 
-Артефакты: `theme1c\cairo1c8.dll`, `theme1c\Theme1C.exe`.
+Артефакты: `theme1c\cairo1c8.dll`, `theme1c\Theme1C.exe`. При успехе: `BUILD_OK`.
 
-## Запуск
+Два таргета:
 
-Положить `Theme1C.exe` и `cairo1c8.dll` в каталог бинарников платформы так, чтобы лаунчер нашёл `..\..\1cv8.exe` относительно своей папки (ожидаемая раскладка как у подпапки в `bin`), либо поправить пути в `launcher.cpp`. Запускать через `Theme1C.exe` вместо прямого DESIGNER.
+1. **DLL** — без CRT (`/NODEFAULTLIB`, stub `kernel32.lib` из `kernel32.def`)
+2. **EXE** — с CRT: `tray_main.cpp`, `inject.cpp`, `settings_ui.cpp`, `onec_paths.cpp`, `theme_ir.cpp`, `appdata.cpp`, `config.cpp`, `theme_convert.cpp`, `theme_state_host.cpp` (`launcher.cpp` не собирается)
 
-## Структура
+## Ограничения
+
+- Только **x64**
+- Фокус на **DESIGNER** (не предприятие)
+- RVA в `core83` хрупкие при смене сборки платформы
+- Эвристики отрисовки (формы / редактор) в UI не выведены
+- Нет упаковки и автотестов под все релизы 1С
+
+## Структура `theme1c/`
 
 ```
-theme1c/
-  cairo1c.cpp   # хук цветов
-  launcher.cpp  # инжектор DESIGNER
-  build.bat
-  minwin.h
-  crtfix.cpp
-  *.def         # минимальные импорты для линковки без SDK
+tray_main.cpp      # host / tray
+inject.cpp         # инъекция в DESIGNER
+settings_ui.cpp    # настройки
+cairo1c.cpp        # хук цветов (DLL)
+theme_ir.*         # Theme IR
+theme_convert.*    # IThemeConverter + VS Code
+appdata.cpp / config.cpp / theme_state_host.cpp
+build.bat
+kernel32.def       # stub для freestanding DLL
+launcher.cpp       # устаревший stub, не в линковке
 ```
